@@ -400,6 +400,8 @@
 				DEVELOPMENT_TEAM = Z4544UL756;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "NavSight uses the camera and LiDAR sensor to detect obstacles and provide real-time navigation assistance for visually impaired users.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "NavSight may use the microphone to provide voice feedback and audio cues for navigation assistance.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -432,6 +434,8 @@
 				DEVELOPMENT_TEAM = Z4544UL756;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "NavSight uses the camera and LiDAR sensor to detect obstacles and provide real-time navigation assistance for visually impaired users.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "NavSight may use the microphone to provide voice feedback and audio cues for navigation assistance.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
