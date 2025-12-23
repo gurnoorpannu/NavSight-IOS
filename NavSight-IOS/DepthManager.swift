@@ -52,21 +52,36 @@ class DepthManager: NSObject, ARSessionDelegate {
         }
     }
     
+    // MARK: - Speech Categories
+    
+    // Separate speech into two categories for better responsiveness
+    private enum SpeechCategory {
+        case status     // Distance & location awareness (more permissive)
+        case command    // Navigation & safety commands (strictly rate-limited)
+    }
+    
     // MARK: - Properties
     
     private let speechManager = SpeechManager()
     
-    // State tracking for distance-based announcements
+    // Separate tracking for status vs command speech
+    private var lastStatusSpeechTime: Date = .distantPast
+    private var lastCommandSpeechTime: Date = .distantPast
+    private var lastSpokenMessage: String = ""
+    
+    // State tracking
     private var lastSpokenState: DistanceState?
     private var lastSpokenDepth: Float = 0.0
-    private var lastSpokenTime: Date = .distantPast
-    
-    // Direction tracking
     private var lastSpokenDirection: NavigationDirection?
     
-    // Thresholds
-    private let significantDepthChange: Float = 0.5 // meters - announce if depth changes by this much
-    private let minimumTimeBetweenAnnouncements: TimeInterval = 4.0 // seconds - prevents spam
+    // Thresholds for status speech (distance awareness)
+    private let statusDepthChangeThreshold: Float = 0.5 // meters - announce every ~0.5m change
+    private let statusMinimumInterval: TimeInterval = 2.0 // seconds - more frequent updates
+    
+    // Thresholds for command speech (navigation & safety)
+    private let commandMinimumInterval: TimeInterval = 4.0 // seconds - strictly rate-limited
+    
+    // General thresholds
     private let safetyThreshold: Float = 1.0 // meters - if center < this, suggest direction change
     
     // MARK: - ARSessionDelegate
@@ -187,45 +202,93 @@ class DepthManager: NSObject, ARSessionDelegate {
         }
     }
     
-    // MARK: - Hybrid Audio Triggering Logic
+    // MARK: - Refactored Audio Triggering Logic (Phase 5)
     
-    /// Determines if speech should be triggered using a hybrid strategy:
-    /// 1. State-based: Announce when distance state changes (VERY_CLOSE → CLOSE, etc.)
-    /// 2. Distance-based: Announce if depth changes by ≥ 0.5m within same state
-    /// 3. Direction-based: Announce when navigation direction changes
-    /// 4. Time-gated: Minimum 4 seconds between announcements (except VERY_CLOSE)
-    /// 5. Safety override: VERY_CLOSE always bypasses time gate
+    /// Refactored speech logic separating STATUS vs COMMAND speech
+    ///
+    /// WHY THIS IMPROVES PHASE 5 USABILITY:
+    /// - Phase 4 logic was designed for distance-only awareness with strict 4-second gates
+    /// - Phase 5 adds directional navigation, requiring more frequent spatial updates
+    /// - Old logic caused long silences while user is moving, reducing situational awareness
+    /// - New logic provides continuous guidance without overwhelming the user
+    ///
+    /// STATUS SPEECH (Distance & Location Awareness):
+    /// - Announces every ~0.5m depth change (user is moving)
+    /// - Minimum 2.5s interval (more permissive)
+    /// - Examples: "2.5 meters ahead", "Object on the left at 1.2 meters"
+    /// - Keeps user informed of environment while walking
+    ///
+    /// COMMAND SPEECH (Navigation & Safety):
+    /// - Strictly rate-limited (4s minimum)
+    /// - Only triggers on direction changes or danger state changes
+    /// - Examples: "Move left", "Warning, 30 centimeters, move right"
+    /// - Prevents command spam while maintaining safety
+    ///
     private func triggerSpeechIfNeeded(leftDepth: Float, centerDepth: Float, rightDepth: Float, direction: NavigationDirection) {
         let currentState = DistanceState.from(depth: centerDepth)
         let now = Date()
-        let timeSinceLastAnnouncement = now.timeIntervalSince(lastSpokenTime)
         
-        // Calculate absolute depth change since last announcement
+        // Determine speech category based on message content
+        let centerBlocked = centerDepth < safetyThreshold
+        let isCommandSpeech = centerBlocked || currentState == .veryClose
+        let category: SpeechCategory = isCommandSpeech ? .command : .status
+        
+        // Get appropriate time gate based on category
+        let timeSinceLastSpeech: TimeInterval
+        let minimumInterval: TimeInterval
+        
+        switch category {
+        case .status:
+            timeSinceLastSpeech = now.timeIntervalSince(lastStatusSpeechTime)
+            minimumInterval = statusMinimumInterval
+        case .command:
+            timeSinceLastSpeech = now.timeIntervalSince(lastCommandSpeechTime)
+            minimumInterval = commandMinimumInterval
+        }
+        
+        // Calculate depth change since last announcement
         let depthChange = abs(centerDepth - lastSpokenDepth)
+        
+        // TRIGGERING CONDITIONS
         
         // CONDITION 1: State changed (e.g. CLOSE → MEDIUM)
         let stateChanged = lastSpokenState != currentState
         
-        // CONDITION 2: Significant depth change within same state
-        let hasSignificantDepthChange = depthChange >= significantDepthChange
+        // CONDITION 2: Significant depth change (user is moving)
+        // More permissive for status speech to provide continuous updates
+        let hasSignificantDepthChange = depthChange >= statusDepthChangeThreshold
         
-        // CONDITION 3: Direction changed (e.g. forwardClear → moveLeft)
+        // CONDITION 3: Direction changed (navigation command needed)
         let directionChanged = lastSpokenDirection != direction
         
-        // CONDITION 4: Time gate check
-        let timeGatePassed = timeSinceLastAnnouncement >= minimumTimeBetweenAnnouncements
+        // CONDITION 4: Time gate passed
+        let timeGatePassed = timeSinceLastSpeech >= minimumInterval
         
-        // CONDITION 5: Safety override for very close obstacles
+        // CONDITION 5: Safety override - VERY_CLOSE always bypasses time gate
         let isSafetyOverride = currentState == .veryClose
         
-        // HYBRID DECISION LOGIC:
-        // Speak if:
-        // - (State changed OR depth changed OR direction changed) AND (time gate passed OR safety override)
-        let shouldTrigger = (stateChanged || hasSignificantDepthChange || directionChanged) && (timeGatePassed || isSafetyOverride)
+        // DECISION LOGIC BY CATEGORY:
+        
+        let shouldTrigger: Bool
+        
+        if category == .command {
+            // COMMAND SPEECH: Strict rate-limiting, only on state/direction changes
+            shouldTrigger = (stateChanged || directionChanged) && (timeGatePassed || isSafetyOverride)
+        } else {
+            // STATUS SPEECH: More permissive, allows depth change updates
+            shouldTrigger = (stateChanged || hasSignificantDepthChange || directionChanged) && (timeGatePassed || isSafetyOverride)
+        }
         
         if shouldTrigger {
-            // Build speech message with spatial context and direction guidance
+            // Build speech message with spatial context
             let message = buildSpeechMessage(leftDepth: leftDepth, centerDepth: centerDepth, rightDepth: rightDepth, direction: direction)
+            
+            // AVOID REPEATING IDENTICAL PHRASES BACK-TO-BACK
+            // This prevents "2.5 meters ahead" → "2.5 meters ahead" repetition
+            guard message != lastSpokenMessage else {
+                print("⏭️  Skipping duplicate message: \"\(message)\"")
+                return
+            }
             
             // Trigger speech
             speechManager.speak(message)
@@ -234,16 +297,25 @@ class DepthManager: NSObject, ARSessionDelegate {
             lastSpokenState = currentState
             lastSpokenDepth = centerDepth
             lastSpokenDirection = direction
-            lastSpokenTime = now
+            lastSpokenMessage = message
             
-            // Debug log to show why speech was triggered
+            // Update appropriate time tracker based on category
+            switch category {
+            case .status:
+                lastStatusSpeechTime = now
+            case .command:
+                lastCommandSpeechTime = now
+            }
+            
+            // Debug log showing category and trigger reason
             var reasons: [String] = []
             if stateChanged { reasons.append("state change") }
             if hasSignificantDepthChange { reasons.append("depth change") }
             if directionChanged { reasons.append("direction change") }
             let reasonText = reasons.joined(separator: ", ")
             let override = isSafetyOverride ? " [SAFETY OVERRIDE]" : ""
-            print("🔊 Speech triggered: \(reasonText)\(override) - State: \(currentState), Direction: \(direction.description)")
+            let categoryText = category == .command ? "COMMAND" : "STATUS"
+            print("🔊 [\(categoryText)] Speech triggered: \(reasonText)\(override) - State: \(currentState), Direction: \(direction.description)")
         }
     }
     
