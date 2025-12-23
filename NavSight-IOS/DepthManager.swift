@@ -63,6 +63,7 @@ class DepthManager: NSObject, ARSessionDelegate {
     // MARK: - Properties
     
     private let speechManager = SpeechManager()
+    private let hapticManager = HapticManager()
     
     // Separate tracking for status vs command speech
     private var lastStatusSpeechTime: Date = .distantPast
@@ -83,6 +84,15 @@ class DepthManager: NSObject, ARSessionDelegate {
     
     // General thresholds
     private let safetyThreshold: Float = 1.0 // meters - if center < this, suggest direction change
+    
+    // MARK: - Initialization
+    
+    override init() {
+        super.init()
+        // Start haptic feedback system
+        hapticManager.start()
+        print("✅ DepthManager initialized with haptic feedback")
+    }
     
     // MARK: - ARSessionDelegate
     
@@ -124,8 +134,33 @@ class DepthManager: NSObject, ARSessionDelegate {
         // Debug log showing all three depths and decision
         print("Left: \(String(format: "%.2f", leftDepth))m | Center: \(String(format: "%.2f", centerDepth))m | Right: \(String(format: "%.2f", rightDepth))m → Decision: \(direction.description)")
         
+        // Update haptic feedback based on center depth
+        // Haptics provide continuous background reassurance that navigation is active
+        // Frequency increases as obstacles get closer
+        hapticManager.updateForDepth(centerDepth)
+        
         // Trigger speech using hybrid strategy (distance + direction + spatial context)
         triggerSpeechIfNeeded(leftDepth: leftDepth, centerDepth: centerDepth, rightDepth: rightDepth, direction: direction)
+    }
+    
+    // MARK: - Session State Management
+    
+    /// Called when AR session is interrupted (e.g., app backgrounded, phone call)
+    func sessionWasInterrupted(_ session: ARSession) {
+        print("⚠️ AR Session interrupted - stopping haptics")
+        hapticManager.stop()
+    }
+    
+    /// Called when AR session interruption ends
+    func sessionInterruptionEnded(_ session: ARSession) {
+        print("✅ AR Session resumed - restarting haptics")
+        hapticManager.start()
+    }
+    
+    /// Called when AR session fails
+    func session(_ session: ARSession, didFailWithError error: Error) {
+        print("❌ AR Session failed - stopping haptics: \(error)")
+        hapticManager.stop()
     }
     
     // MARK: - Depth Sampling
